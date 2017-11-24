@@ -2,17 +2,17 @@ package com.example.liu_xingxing.downloadhelp
 
 import android.os.Handler
 import android.os.Looper
-import okhttp3.OkHttpClient
-import okhttp3.Request
+import okhttp3.*
 import java.io.File
 import java.io.FileOutputStream
+import java.io.IOException
 import java.io.InputStream
 
 
 /**
  * Created by stars on 2017/11/22.
  */
-class HttpHelper private constructor(private val url: String) {
+class HttpHelper  {
     private val okhttp = OkHttpClient()
     private val handler = Handler(Looper.getMainLooper())
 
@@ -25,7 +25,7 @@ class HttpHelper private constructor(private val url: String) {
     }
 
     private object Inner {
-        val instance = HttpHelper(mUrl)
+        val instance = HttpHelper()
     }
 
 
@@ -36,8 +36,7 @@ class HttpHelper private constructor(private val url: String) {
      */
     fun downLoadFileProgress(fileName: String, destFileDir: String,
                              success: (filePath: String) -> Unit,
-                             progress: (path:String,total: Long, i: Long) -> Unit,
-                             start: (totalLength: Long) -> Unit,
+                             progress: (path: String, total: Long, i: Long) -> Unit,
                              fail: (err: String) -> Unit
     ) {
 
@@ -51,7 +50,8 @@ class HttpHelper private constructor(private val url: String) {
             return
         }
         val request = Request.Builder()
-                .url(url)
+                .url(mUrl)
+                .addHeader("Range", "bytes=$")
                 .build()
         val response = okhttp.newCall(request).execute()
         if (!response.isSuccessful) {
@@ -70,13 +70,12 @@ class HttpHelper private constructor(private val url: String) {
             fos = FileOutputStream(file)
             val buf = ByteArray(1024 * 8)
             var currentProgress: Long = 0
-            start(body.contentLength())
             var len = byteStream.read(buf)
             while (len != -1) {
                 fos.write(buf, 0, len)
                 len = byteStream.read(buf)
                 currentProgress += len
-                progress(file.absolutePath,body.contentLength(),currentProgress)
+                progress(file.absolutePath, body.contentLength(), currentProgress)
             }
 
             fos!!.flush()
@@ -90,11 +89,21 @@ class HttpHelper private constructor(private val url: String) {
         }
     }
 
-    fun getContentLength():Long?{
+    fun getContentLength(callback: Callback){
         val request = Request.Builder()
-                .url(url)
+                .url(mUrl)
                 .build()
-        return okhttp.newCall(request).execute().body()?.contentLength()
+        okhttp.newCall(request).enqueue(callback)
 
+    }
+
+    fun syncRequestByRange(start: Long, end: Long): Array<Any> {
+        val request = Request.Builder()
+                .url(mUrl)
+                .addHeader("Range", "bytes=$start-$end")
+                .build()
+        val newCall = okhttp.newCall(request)
+        val response = newCall.execute()
+        return arrayOf(newCall,response)
     }
 }

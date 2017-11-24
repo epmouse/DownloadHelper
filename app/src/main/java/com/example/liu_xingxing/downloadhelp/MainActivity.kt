@@ -1,59 +1,50 @@
 package com.example.liu_xingxing.downloadhelp
 
-import android.annotation.SuppressLint
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
 import android.support.v7.app.AppCompatActivity
-import android.util.Log
+import android.widget.TextView
 import kotlinx.android.synthetic.main.activity_main.*
-import java.security.KeyStore
 
 class MainActivity : AppCompatActivity() {
-
+    lateinit var handler: Handler
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_main)
-        todownload()
+        handler = Handler(Looper.getMainLooper())
+        initDownload()
     }
 
-    private fun todownload() {
-        DownloadManager.COREPOOL_SIZE = 3
-        btn.setOnClickListener {
-            for(i in 1 until 6 ){
+    private fun initDownload() {
+        val baseUrl = "http://10.16.15.77:8080/download/"
+        tv_1.setOnClickListener { toDownload("${baseUrl}1.mp3", "1.mp3", tv_1) }
+        tv_2.setOnClickListener { toDownload("${baseUrl}2.mp3", "2.mp3", tv_2) }
+        tv_3.setOnClickListener { toDownload("${baseUrl}3.mp3", "3.mp3", tv_3) }
+        tv_4.setOnClickListener { toDownload("${baseUrl}4.mp3", "4.mp3", tv_4) }
+        tv_5.setOnClickListener { toDownload("${baseUrl}5.mp3", "5.mp3", tv_5) }
+    }
 
-                DownloadManager.download("http://10.16.15.77:8080/download/$i", "$i", this.externalCacheDir.absolutePath,
-                        { filePath ->
-                            Log.e("download", filePath)
-                        },
-                        {path, total, progress ->
-                                updateProgress(path,total,progress)
-                            Log.e("download", "$progress")
-                        },
-                        { totalLength ->
-                            Log.e("download", "$totalLength")
-                        },
-                        { err ->
-                            Log.e("download", err)
+    private fun toDownload(url: String, name: String, textView: TextView) {
+        DownloadManager.getInstance(this.applicationContext).download(
+                url,
+                name,
+                object : MyCallback {
+                    override fun success(filePath: String) {
+                        handler.post {
+                            textView.text = "完成"
                         }
-                )
+                    }
+                    override fun fail(errCode: Int, errMsg: String) {
+                    }
 
-            }
+                    override fun progress(filePath: String, progress: Long) {
+                        handler.post {
+                            textView.text = "$progress"
+                        }
+                    }
 
-        }
-
-    }
-
-    @SuppressLint("SetTextI18n")
-    private fun updateProgress(path: String, total: Long, progress: Long)=with(path) {
-        Handler(Looper.getMainLooper()).post {
-            when(true){
-                endsWith("1")-> tv_1.text="$progress/$total"
-                endsWith("2")-> tv_2.text="$progress/$total"
-                endsWith("3")-> tv_3.text="$progress/$total"
-                endsWith("4")-> tv_4.text="$progress/$total"
-                endsWith("5")-> tv_5.text="$progress/$total"
-            }
-        }
+                }
+        )
     }
 }
