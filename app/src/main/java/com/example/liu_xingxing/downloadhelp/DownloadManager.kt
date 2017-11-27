@@ -2,7 +2,7 @@ package com.example.liu_xingxing.downloadhelp
 
 import android.content.Context
 import android.text.TextUtils
-import android.util.Log
+import greendao.DownloadEntityDao
 import okhttp3.Call
 import okhttp3.Callback
 import okhttp3.Response
@@ -64,16 +64,6 @@ class DownloadManager private constructor() {
         val instance = DownloadManager()
     }
 
-    /**
-     * 取消对应的下载任务，并从map中删除
-     */
-    fun cancelDownloadTask(url: String) {
-        var call = downloadCalls[url]
-        if (call != null) {
-            call.cancel()
-        }
-        downloadCalls.remove(url)
-    }
 
     fun getFileCurrentLength(fileName: String): Long {
         val file = File(fileHome, fileName)
@@ -81,36 +71,67 @@ class DownloadManager private constructor() {
 
     }
 
-    fun download(url: String, fileName: String, downloadCallback: MyCallback?) {
+    fun download(url: String, fileName: String?, downloadCallback: MyCallback?) {
+        //todo-需要考虑两种情况，1、数据库有，但是文件被删除了（重新从零下载）；2、数据库没有，但是本地存在(目前此情况直接删除本地文件，重新下载)
+        //todo-需要考虑使用者接口的情况，比如使用携带参数来区别文件下载的情况。目前只考虑了在url后面添加文件名的方式
+        val realFileName = fileName ?: url.substring(url.lastIndexOf("/") + 1)
+        val downloadEntity = MyApp.dbManager.getDownloadEntityByUrl(url)
+        if (downloadEntity == null) {//没下载过
+            if (FileIsExist(realFileName)) File("$fileHome/$realFileName").delete()
+            val downloadEntity1 = DownloadEntity(url, 0, 0, realFileName)
 
-        HttpHelper.getInstance(url).getContentLength(object : Callback {
-            override fun onFailure(call: Call?, e: IOException?) {
-                downloadCallback?.fail(MyRunnable.NETWORK_ERR, "网络请求失败")
-            }
-
-            override fun onResponse(call: Call?, response: Response?) {
-                if (response == null) {
+            HttpHelper.getInstance(url).getContentLength(object : Callback {
+                override fun onFailure(call: Call?, e: IOException?) {
                     downloadCallback?.fail(MyRunnable.NETWORK_ERR, "网络请求失败")
-                    return
                 }
-                val contentLength = response.body()?.contentLength()
-                if (contentLength == (-1).toLong()) {
-                    downloadCallback?.fail(MyRunnable.CONTEENTLENGTH_ERR, "contentlength 无法获取")
-                    return
-                }
-                val currentLength = getFileCurrentLength(fileName)
-                if (currentLength < contentLength!!){
-                    if (!downloadCalls.containsKey(url)||!File(fileHome,fileName).exists()) {//防止多次下载同一文件，另外保证文件被删除后可以重新下载。
-                        e.execute(MyRunnable(url, fileName, currentLength, contentLength, downloadCallback))
+
+                override fun onResponse(call: Call?, response: Response?) {
+                    if (response == null) {
+                        downloadCallback?.fail(MyRunnable.NETWORK_ERR, "网络请求失败")
+                        return
                     }
-                } else downloadCallback?.success("$fileHome/$fileName")
+                    val contentLength = response.body()?.contentLength()
+                    if (contentLength == (-1).toLong()) {
+                        downloadCallback?.fail(MyRunnable.CONTEENTLENGTH_ERR, "contentlength 无法获取")
+                        return
+                    }
+                    downloadEntity1.totalLength = contentLength!!
+                    processDownload(downloadEntity1, downloadCallback)
+                }
+            })
+        } else {//已下载过
+            val exists = FileIsExist(downloadEntity.fileName)
+            downloadEntity.currentProgress = if (exists) downloadEntity.currentProgress else 0
+            if (downloadEntity.isComplete() && exists) {
+                downloadCallback?.success("$fileHome/${downloadEntity.fileName}")
+            } else {
+                processDownload(downloadEntity, downloadCallback)
             }
-
-        })
-
+        }
     }
 
-    class MyRunnable(private val url: String, private val fileName: String, private var start: Long, private var end: Long, private val downloadCallback: MyCallback?) : Runnable {
+    private fun processDownload(downloadEntity: DownloadEntity, downloadCallback: MyCallback?) {
+        if (!downloadCalls.containsKey(downloadEntity.url)) {
+            e.execute(MyRunnable(downloadEntity, downloadCallback))
+        }
+    }
+
+    private fun FileIsExist(fileName: String) = File(fileHome, fileName).exists()
+
+
+    class MyRunnable(private val downloadEntity: DownloadEntity, private val downloadCallback: MyCallback?) : Runnable {
+        /**
+         * 取消对应的下载任务，并从map中删除
+         */
+        fun cancelDownloadTask(url: String) {
+            var call = downloadCalls[url]
+            if (call != null) {
+                call.cancel()
+            }
+            downloadCalls.remove(url)
+        }
+
+
         companion object {
             val NETWORK_ERR = 0
             val IO_GET_ERR = 1
@@ -119,8 +140,8 @@ class DownloadManager private constructor() {
         }
 
         override fun run() {
-            val arr = HttpHelper.getInstance(url).syncRequestByRange(start, end)
-            downloadCalls.put(url, arr[0] as Call)
+            val arr = HttpHelper.getInstance(downloadEntity.url).syncRequestByRange(downloadEntity.currentProgress, downloadEntity.totalLength)
+            downloadCalls.put(downloadEntity.url, arr[0] as Call)
             toDownload(arr[1] as Response)
         }
 
@@ -130,7 +151,7 @@ class DownloadManager private constructor() {
                 return
             }
             val body = response!!.body()
-            val file = getFileByName(fileName)
+            val file = getFileByName(downloadEntity.fileName)
             val randomAccessFile = RandomAccessFile(file, "rwd")
             val buf = ByteArray(1024 * 80)
             var byteStream: InputStream? = null
@@ -140,21 +161,29 @@ class DownloadManager private constructor() {
                     downloadCallback?.fail(IO_GET_ERR, "获取流失败")
                     return
                 }
-                var currentProgress: Long = start
+                var currentProgress: Long = downloadEntity.currentProgress
                 var len = byteStream.read(buf)
-                randomAccessFile.seek(start)
+                randomAccessFile.seek(downloadEntity.currentProgress)
                 while (len != -1) {
                     randomAccessFile.write(buf, 0, len)
-                    currentProgress += len
+                    currentProgress += len.toLong()
                     len = byteStream.read(buf)
                     downloadCallback?.progress(file.absolutePath, currentProgress)
+                    downloadEntity.currentProgress = currentProgress
                 }
                 downloadCallback?.success(file.absolutePath)
+                cancelDownloadTask(downloadEntity.url)
+                downloadEntity.setComplete(true)
             } catch (e: Exception) {
                 e.printStackTrace()
             } finally {
                 byteStream?.close()
                 randomAccessFile.close()
+                cancelDownloadTask(downloadEntity.url)
+                if (MyApp.dbManager.getDownloadEntityByUrl(downloadEntity.url) != null)//有则更新，没有则插入
+                    MyApp.dbManager.getWritterDownloadEntityDao().update(downloadEntity)
+                else
+                    MyApp.dbManager.getWritterDownloadEntityDao().insert(downloadEntity)
             }
 
         }
@@ -172,7 +201,6 @@ class DownloadManager private constructor() {
         }
 
     }
-
 
 }
 
