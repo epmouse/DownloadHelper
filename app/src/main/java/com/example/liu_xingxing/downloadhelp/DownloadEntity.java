@@ -2,6 +2,7 @@ package com.example.liu_xingxing.downloadhelp;
 
 import org.greenrobot.greendao.annotation.Entity;
 import org.greenrobot.greendao.annotation.Id;
+import org.greenrobot.greendao.annotation.Keep;
 import org.greenrobot.greendao.annotation.Unique;
 import org.greenrobot.greendao.annotation.Generated;
 
@@ -11,7 +12,7 @@ import org.greenrobot.greendao.annotation.Generated;
 @Entity
 public class DownloadEntity {
     @Id
-    private int id;
+    private Long id;
     @Unique
     private String url;
     private long totalLength;
@@ -19,21 +20,11 @@ public class DownloadEntity {
     private String fileName;
     private boolean isComplete;
 
-    public DownloadEntity( String url, long totalLength,
-            long currentProgress, String fileName) {
-        this.url = url;
-        this.totalLength = totalLength;
-        this.currentProgress = currentProgress;
-        this.fileName = fileName;
-        this.isComplete = currentProgress!=0&&totalLength!=0&&currentProgress==totalLength;
-    }
-
     public DownloadEntity() {
         this.isComplete = currentProgress!=0&&totalLength!=0&&currentProgress==totalLength;
     }
-
-    @Generated(hash = 1605444494)
-    public DownloadEntity(int id, String url, long totalLength, long currentProgress,
+    @Keep
+    public DownloadEntity(Long id, String url, long totalLength, long currentProgress,
             String fileName, boolean isComplete) {
         this.id = id;
         this.url = url;
@@ -42,11 +33,11 @@ public class DownloadEntity {
         this.fileName = fileName;
         this.isComplete = isComplete;
     }
-    public int getId() {
+    public Long getId() {
         return id;
     }
 
-    public void setId(int id) {
+    public void setId(Long id) {
         this.id = id;
     }
 

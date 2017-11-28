@@ -2,6 +2,7 @@ package com.example.liu_xingxing.downloadhelp
 
 import android.content.Context
 import android.text.TextUtils
+import android.util.Log
 import greendao.DownloadEntityDao
 import okhttp3.Call
 import okhttp3.Callback
@@ -10,11 +11,14 @@ import java.io.*
 import java.util.*
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
+import java.util.concurrent.TimeUnit
 
 /**
  * Created by stars on 2017/11/22.
  */
 class DownloadManager private constructor() {
+
+    private val scheduleInterval = Executors.newScheduledThreadPool(2)
     private lateinit var e: ExecutorService
     private val set = hashSetOf<String>()
 
@@ -64,11 +68,9 @@ class DownloadManager private constructor() {
         val instance = DownloadManager()
     }
 
-
     fun getFileCurrentLength(fileName: String): Long {
         val file = File(fileHome, fileName)
         return if (file.exists()) file.length() else 0
-
     }
 
     fun download(url: String, fileName: String?, downloadCallback: MyCallback?) {
@@ -78,7 +80,7 @@ class DownloadManager private constructor() {
         val downloadEntity = MyApp.dbManager.getDownloadEntityByUrl(url)
         if (downloadEntity == null) {//没下载过
             if (FileIsExist(realFileName)) File("$fileHome/$realFileName").delete()
-            val downloadEntity1 = DownloadEntity(url, 0, 0, realFileName)
+            val downloadEntity1 = DownloadEntity(null, url, 0, 0, realFileName, false)
 
             HttpHelper.getInstance(url).getContentLength(object : Callback {
                 override fun onFailure(call: Call?, e: IOException?) {
@@ -102,6 +104,7 @@ class DownloadManager private constructor() {
         } else {//已下载过
             val exists = FileIsExist(downloadEntity.fileName)
             downloadEntity.currentProgress = if (exists) downloadEntity.currentProgress else 0
+            if (!exists) downloadEntity.setComplete(false)
             if (downloadEntity.isComplete() && exists) {
                 downloadCallback?.success("$fileHome/${downloadEntity.fileName}")
             } else {
@@ -112,7 +115,18 @@ class DownloadManager private constructor() {
 
     private fun processDownload(downloadEntity: DownloadEntity, downloadCallback: MyCallback?) {
         if (!downloadCalls.containsKey(downloadEntity.url)) {
-            e.execute(MyRunnable(downloadEntity, downloadCallback))
+            val myRunnable = MyRunnable(downloadEntity, downloadCallback)
+            e.execute(myRunnable)
+            downloadCalls.put(downloadEntity.url, null)//防止轮询被同一个下载线程多次调用。
+            scheduleInterval.scheduleAtFixedRate({
+                //每隔1s 插入一次数据库，保证强制退出的时候保存进度
+                if (myRunnable.getDownloadEntity().isComplete()) {
+                    throw RuntimeException("移除轮询${downloadEntity.url}")
+                }
+                    myRunnable.saveToDB()
+//                scheduleInterval.shutdown()
+                Log.e("download", "插入一次${downloadEntity.url}")
+            }, 0, 1000, TimeUnit.MILLISECONDS)
         }
     }
 
@@ -180,12 +194,20 @@ class DownloadManager private constructor() {
                 byteStream?.close()
                 randomAccessFile.close()
                 cancelDownloadTask(downloadEntity.url)
-                if (MyApp.dbManager.getDownloadEntityByUrl(downloadEntity.url) != null)//有则更新，没有则插入
-                    MyApp.dbManager.getWritterDownloadEntityDao().update(downloadEntity)
-                else
-                    MyApp.dbManager.getWritterDownloadEntityDao().insert(downloadEntity)
+                saveToDB()
             }
 
+        }
+
+        fun saveToDB() {
+            if (MyApp.dbManager.getDownloadEntityByUrl(downloadEntity.url) != null)//有则更新，没有则插入
+                MyApp.dbManager.getWritterDownloadEntityDao().update(downloadEntity)
+            else
+                MyApp.dbManager.getWritterDownloadEntityDao().insert(downloadEntity)
+        }
+
+        fun getDownloadEntity(): DownloadEntity {
+            return downloadEntity
         }
 
         private fun getFileByName(fileName: String): File {
@@ -203,8 +225,4 @@ class DownloadManager private constructor() {
     }
 
 }
-
-data class DownloadBean(var url: String, var totalLength: Long?,
-                        var currentProgress: Long, var fileName: String,
-                        var isComplete: Boolean)
 
